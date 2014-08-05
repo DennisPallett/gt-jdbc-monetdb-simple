@@ -88,7 +88,7 @@ public class SimpleMonetDBDataStore extends ContentDataStore {
             
             while(res.next()) {
                 String name = res.getString("f_table_name");
-                ret.add(new NameImpl(name));
+                ret.add(new NameImpl(namespaceURI, name));
             }            
             
             res.close();

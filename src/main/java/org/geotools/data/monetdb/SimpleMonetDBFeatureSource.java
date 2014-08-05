@@ -47,11 +47,13 @@ import org.opengis.feature.type.GeometryDescriptor;
 import org.opengis.feature.type.GeometryType;
 import org.opengis.filter.Filter;
 import org.opengis.filter.sort.SortBy;
-import org.opengis.geometry.primitive.Point;
 import org.opengis.referencing.FactoryException;
 import org.opengis.referencing.NoSuchAuthorityCodeException;
 import org.opengis.referencing.crs.CRSAuthorityFactory;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
+import com.vividsolutions.jts.geom.Point;
+import org.opengis.filter.IncludeFilter;
+import org.opengis.filter.spatial.BBOX;
 
 /**
  *
@@ -112,9 +114,18 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
 
     @Override
     protected ReferencedEnvelope getBoundsInternal(Query query) throws IOException {
-        LOGGER.severe("filter: "+query.getFilter().getClass().getCanonicalName());
+        Filter filter = query.getFilter();
         
-        // TODO: handle query filter
+        // handle query filter
+        if (filter instanceof IncludeFilter) {
+            // don't care about this filter, ignore it
+        } else if (filter instanceof BBOX) {
+            LOGGER.severe("HANDLE BBOX FILTER!!");
+        } else {
+            throw new UnsupportedOperationException("Filter of type " + filter.getClass().getName() + " is not supported by getBoundsInteral!");
+        }
+                
+        
         
         ReferencedEnvelope bounds = null;
         try {
@@ -151,6 +162,11 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
     @Override
     protected int getCountInternal(Query query) throws IOException {
         // TODO: support query filter
+        Filter filter = query.getFilter();
+        if (filter != null) {
+            //LOGGER.severe("Unhandled filter in getCountInternal" + query.getFilter());
+            LOGGER.warning("Unable handler filter in getCountInternal" + query.getFilter().getClass().getName());
+        }
         
         int count = -1;
         try {
@@ -164,6 +180,16 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
         } catch (SQLException e) {
             throw new IOException(e);
         }
+        
+        if (checkLimitOffset(query)) {
+            final int limit = query.getMaxFeatures();
+            
+            if (limit > count) {
+                count = limit;
+            }
+        }
+        
+        System.out.println("FeatureCount: " + count);
         
         return count;
     }
@@ -181,7 +207,7 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
         // create the reader
         FeatureReader<SimpleFeatureType, SimpleFeature> reader;
         try {
-            reader = new SimpleMonetDBFeatureReader(sql, conn, this, getSchema(), query.getHints());
+            reader = new SimpleMonetDBFeatureReader(sql, conn, this, getSchema(), query.getHints(), this.srid);
         } catch (Throwable e) {
              if (e instanceof Error) {
                 throw (Error) e;
@@ -210,7 +236,8 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
             sql.append(" WHERE ");
             
             //encode filter
-            filter(getSchema(), filter, sql);
+            CoordinateReferenceSystem queryCrs = (query.getCoordinateSystem() != null) ? query.getCoordinateSystem() : query.getCoordinateSystemReproject();
+            filter(getSchema(), filter, sql, queryCrs);
         }
 
         //sorting
@@ -240,13 +267,14 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
         }
     }
     
-    FilterToSQL filter(SimpleFeatureType featureType, Filter filter, StringBuilder sql) throws IOException {
+    FilterToSQL filter(SimpleFeatureType featureType, Filter filter, StringBuilder sql, CoordinateReferenceSystem queryCrs) throws IOException {
         
         try {
             // grab the full feature type, as we might be encoding a filter
             // that uses attributes that aren't returned in the results
             FilterToSQL toSQL = new FilterToSQL();
             toSQL.setFeatureType(featureType);
+            toSQL.setQueryCrs(queryCrs);
                     
             toSQL.setInline(true);
             sql.append(" ").append(toSQL.encodeToString(filter));
@@ -318,7 +346,6 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
     @Override
     protected SimpleFeatureType buildFeatureType() throws IOException {
         SimpleFeatureTypeBuilder builder = new SimpleFeatureTypeBuilder();
-        AttributeTypeBuilder ab = new AttributeTypeBuilder();
        
         //set up the name
         builder.setName(typeName);
@@ -362,10 +389,12 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
                     continue;
                 }
                 
+                builder.userData(JDBCDataStore.JDBC_NATIVE_TYPENAME, typeName);
+                
                 // nullability
                 if (isNullable == false) {
-                    ab.nillable(false);
-                    ab.minOccurs(1);
+                    builder.nillable(false);
+                    builder.minOccurs(1);
                 }
                 
                 Class<?> mapping = getMapping(typeName);
@@ -374,12 +403,8 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
                     LOGGER.severe("Unable to find mapping for SQL type '" + typeName + "'");
                     continue;
                 }
-                
-                ab.setName(name);
-                ab.setBinding(mapping);
-                
-                AttributeDescriptor att = ab.buildDescriptor(name, ab.buildType());                
-                builder.add(att);
+                                
+                builder.add(name, mapping);
             }
             
             columns.close();
@@ -388,19 +413,15 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
             Logger.getLogger(SimpleMonetDBFeatureSource.class.getName()).log(Level.SEVERE, null, ex);
         }
         
-        ab.setName(geometryColumn);
-        ab.setBinding(Point.class);
-        
         if (isNullableX == false || isNullableY == false) {
-            ab.setNillable(false);
-            ab.minOccurs(1);
+            builder.nillable(false);
+            builder.minOccurs(1);
         }
         
-        CRSAuthorityFactory factory = CRS.getAuthorityFactory(true);
         CoordinateReferenceSystem crs = DefaultGeographicCRS.WGS84;
         
         try {
-            crs = factory.createCoordinateReferenceSystem("EPSG:" + srid);
+            crs = CRS.decode("EPSG:" + srid);
         } catch (NoSuchAuthorityCodeException ex) {
             LOGGER.severe("Invalid SRID " + srid);
             ex.printStackTrace();            
@@ -408,12 +429,13 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
             ex.printStackTrace();
         }
         
-        ab.setCRS(crs);
-        ab.addUserData(JDBCDataStore.JDBC_NATIVE_SRID, srid);
-        ab.addUserData(Hints.COORDINATE_DIMENSION, dimension);
+        builder.setCRS(crs);
+        builder.srid(srid);
+        builder.crs(crs);
+        builder.userData(JDBCDataStore.JDBC_NATIVE_SRID, srid);
+        builder.userData(Hints.COORDINATE_DIMENSION, dimension);      
         
-        AttributeDescriptor att = ab.buildDescriptor(geometryColumn, ab.buildGeometryType());
-        builder.add(att);        
+        builder.add(geometryColumn, Point.class, srid);
         
         //build the final type
         SimpleFeatureType ft = builder.buildFeatureType();
@@ -433,6 +455,11 @@ public class SimpleMonetDBFeatureSource extends ContentFeatureSource {
     
     @Override
     protected boolean canSort() {
+        return true;
+    }
+    
+    @Override
+    protected boolean canRetype () {
         return false;
     }
     

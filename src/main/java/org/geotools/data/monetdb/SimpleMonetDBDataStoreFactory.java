@@ -26,12 +26,16 @@ package org.geotools.data.monetdb;
 import java.awt.RenderingHints;
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Logger;
 import org.geotools.data.DataStore;
 import org.geotools.data.DataStoreFactorySpi;
 import org.geotools.data.AbstractDataStoreFactory;
+import org.geotools.data.FeatureSource;
 import org.geotools.util.KVP;
+import org.opengis.feature.type.FeatureType;
+import org.opengis.feature.type.GeometryDescriptor;
 
 public class SimpleMonetDBDataStoreFactory  extends AbstractDataStoreFactory {
     private static final Logger LOGGER = Logger.getLogger("org.geotools.data.monetdb.SimpleMonetDBDataStoreFactory");
@@ -44,6 +48,9 @@ public class SimpleMonetDBDataStoreFactory  extends AbstractDataStoreFactory {
     public static final Param PASSWORD_PARAM = new Param("password", String.class, "password", true, null, new KVP(new Object[] {
         "isPassword", Boolean.valueOf(true)
     }));
+    
+    /** parameter for namespace of the datastore */
+    public static final Param NAMESPACE_PARAM = new Param("namespace", String.class, "Namespace prefix", false);
 
     @Override
     public String getDisplayName() {
@@ -58,7 +65,7 @@ public class SimpleMonetDBDataStoreFactory  extends AbstractDataStoreFactory {
     @Override
     public Param[] getParametersInfo() {
         return (new Param[] {
-            HOSTNAME_PARAM, PORT_PARAM, SCHEMA_PARAM, DATABASE_PARAM, USERNAME_PARAM, PASSWORD_PARAM
+            HOSTNAME_PARAM, PORT_PARAM, SCHEMA_PARAM, DATABASE_PARAM, USERNAME_PARAM, PASSWORD_PARAM, NAMESPACE_PARAM
         });
     }
 
@@ -75,12 +82,51 @@ public class SimpleMonetDBDataStoreFactory  extends AbstractDataStoreFactory {
         String database = (String)DATABASE_PARAM.lookUp(params);
         String username = (String)USERNAME_PARAM.lookUp(params);
         String password = (String)PASSWORD_PARAM.lookUp(params);
+               
+        SimpleMonetDBDataStore dataStore = new SimpleMonetDBDataStore(hostname, port, schema, database, username, password);
         
-        return new SimpleMonetDBDataStore(hostname, port, schema, database, username, password);
+        String namespace = (String) NAMESPACE_PARAM.lookUp(params);
+        
+        if (namespace != null) {
+            dataStore.setNamespaceURI(namespace);
+        }
+        
+        return dataStore;
     }
 
     @Override
     public DataStore createNewDataStore(Map<String, Serializable> map) throws IOException {
          throw new UnsupportedOperationException("SimpleMonetDBDataStore is read-only");
+    }
+    
+    public static void main (String[] arg) throws Exception {
+        Map<String,Serializable> params = new HashMap<String,Serializable>();
+        params.put( "dbtype", "monetdb");
+        params.put( "hostname", "farm12.ewi.utwente.nl");
+        params.put ("schema", "sys");
+        params.put( "database", "twitter");
+        params.put( "username", "monetdb");
+        params.put( "password", "monetdb");
+        params.put ("port", 50000);
+        
+        DataStore dataStore = (new SimpleMonetDBDataStoreFactory()).createDataStore(params);
+        if (dataStore == null) {
+        	throw new Exception("Unable to create datastore!");
+        }        
+        System.out.println("DataStore created!");
+        
+        FeatureSource fsSource = dataStore.getFeatureSource("uk_neogeo");
+        
+        FeatureType schema = fsSource.getSchema();
+        
+        final GeometryDescriptor geometryAttribute = schema.getGeometryDescriptor();
+        
+        //System.out.println(featureType);
+        
+        System.out.println(geometryAttribute.getType().getCoordinateReferenceSystem());
+        
+        
+        
+        dataStore.dispose();
     }
 }

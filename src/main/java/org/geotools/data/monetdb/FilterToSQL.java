@@ -94,6 +94,7 @@ import org.opengis.filter.temporal.OverlappedBy;
 import org.opengis.filter.temporal.TContains;
 import org.opengis.filter.temporal.TEquals;
 import org.opengis.filter.temporal.TOverlaps;
+import org.opengis.referencing.crs.CoordinateReferenceSystem;
 
 /**
  *
@@ -123,6 +124,9 @@ public class FilterToSQL  implements FilterVisitor, ExpressionVisitor  {
     
     /** Character used to escape database schema, table and column names */
     private String sqlNameEscape = "\"";
+    
+    /** the CoordinateReferenceSystem of the query */
+    private CoordinateReferenceSystem queryCrs;
     
     /**
      * Default constructor
@@ -228,6 +232,16 @@ public class FilterToSQL  implements FilterVisitor, ExpressionVisitor  {
     }
     
     /**
+     * Sets the CoordinateReferenceSystem of the query
+     * 
+     * @param queryCrs
+     */
+    public void setQueryCrs(CoordinateReferenceSystem queryCrs) {
+        this.queryCrs = queryCrs;
+    }
+    
+    
+    /**
      * Sets the featuretype the encoder is encoding sql for.
      * <p>
      * This is used for context for attribute expressions when encoding to sql. 
@@ -310,7 +324,8 @@ public class FilterToSQL  implements FilterVisitor, ExpressionVisitor  {
     PropertyName property, Literal geometry, boolean swapped,
     Object extraData) {
         Geometry geom  = (Geometry) geometry.evaluate(extraData, Geometry.class);
-        geom.setSRID(currentSRID);
+        System.out.println(geom.getSRID());
+        //geom.setSRID(currentSRID);
         
         if (filter instanceof BBOX) {        
             Coordinate[] coords = geom.getCoordinates();
@@ -329,17 +344,21 @@ public class FilterToSQL  implements FilterVisitor, ExpressionVisitor  {
 
             try {
                 out.write(property.toString());
-                out.write("_x BETWEEN ");
+                out.write("_x >= ");
                 out.write(String.valueOf(minX));
                 out.write(" AND ");
+                out.write(property.toString());
+                out.write("_x <= ");
                 out.write(String.valueOf(maxX));
 
                 out.write(" AND ");
 
                 out.write(property.toString());
-                out.write("_y BETWEEN ");
+                out.write("_y >= ");
                 out.write(String.valueOf(minY));
                 out.write(" AND ");
+                out.write(property.toString());
+                out.write("_y <= ");
                 out.write(String.valueOf(maxY));
             } catch (IOException ex) {
                 LOGGER.warning(ex.getMessage());

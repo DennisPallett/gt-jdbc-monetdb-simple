@@ -21,8 +21,11 @@ import org.geotools.data.Transaction;
 import org.geotools.factory.Hints;
 import org.geotools.feature.IllegalAttributeException;
 import org.geotools.feature.simple.SimpleFeatureBuilder;
+import org.geotools.geometry.jts.JTS;
 import org.geotools.geometry.jts.JTSFactoryFinder;
 import org.geotools.jdbc.JDBCFeatureSource;
+import org.geotools.referencing.CRS;
+import org.geotools.referencing.crs.DefaultGeographicCRS;
 import org.geotools.util.Converters;
 import org.geotools.util.logging.Logging;
 import org.opengis.feature.FeatureFactory;
@@ -30,6 +33,12 @@ import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
 import org.opengis.feature.type.AttributeDescriptor;
 import org.opengis.feature.type.GeometryDescriptor;
+import org.opengis.geometry.MismatchedDimensionException;
+import org.opengis.referencing.FactoryException;
+import org.opengis.referencing.NoSuchAuthorityCodeException;
+import org.opengis.referencing.crs.CoordinateReferenceSystem;
+import org.opengis.referencing.operation.MathTransform;
+import org.opengis.referencing.operation.TransformException;
 
 /**
  *
@@ -72,6 +81,8 @@ public class SimpleMonetDBFeatureReader  implements  FeatureReader<SimpleFeature
      */
     protected SimpleFeatureBuilder builder;
     
+    protected MathTransform mathTransform;
+    
     /**
      * statement,result set that is being worked from.
      */
@@ -82,14 +93,28 @@ public class SimpleMonetDBFeatureReader  implements  FeatureReader<SimpleFeature
     
     protected int row = 0;
     
+    protected int srid;
+    
     /**
      * offset/column index to start reading from result set
      */
     protected int offset = 0;
     
-    public SimpleMonetDBFeatureReader(String sql, Connection conn, SimpleMonetDBFeatureSource featureSource, SimpleFeatureType featureType, Hints hints ) 
+    public SimpleMonetDBFeatureReader(String sql, Connection conn, SimpleMonetDBFeatureSource featureSource, SimpleFeatureType featureType, Hints hints, int srid ) 
     throws SQLException {
         init( featureSource, featureType, hints );
+        
+        this.srid = srid;
+        
+        CoordinateReferenceSystem sourceCrs = featureType.getGeometryDescriptor().getCoordinateReferenceSystem();
+        CoordinateReferenceSystem targetCrs = DefaultGeographicCRS.WGS84;
+        try {
+            targetCrs = CRS.decode("EPSG:3857");
+            boolean lenient = true;
+            mathTransform = CRS.findMathTransform(sourceCrs, targetCrs, lenient);
+        } catch (Exception ex) {
+            Logger.getLogger(SimpleMonetDBFeatureReader.class.getName()).log(Level.SEVERE, null, ex);
+        }
         
         //create the result set
         this.conn = conn;
@@ -111,15 +136,16 @@ public class SimpleMonetDBFeatureReader  implements  FeatureReader<SimpleFeature
             // look for a coordinate sequence factory
             CoordinateSequenceFactory csFactory = 
                 (CoordinateSequenceFactory) hints.get(Hints.JTS_COORDINATE_SEQUENCE_FACTORY);
-
+            
             if (csFactory != null) {
                 geometryFactory = new GeometryFactory(csFactory);
             }
         }
-
+        
         if (geometryFactory == null) {
             geometryFactory = JTSFactoryFinder.getGeometryFactory(null);
         }
+  
         
         builder = new SimpleFeatureBuilder(featureType);
     }
@@ -147,6 +173,14 @@ public class SimpleMonetDBFeatureReader  implements  FeatureReader<SimpleFeature
     protected void ensureOpen() throws IOException {
         if ( rs == null ) {
             throw new IOException( "reader already closed" );
+        }
+    }
+    
+    protected Geometry transform (Geometry geom) throws IOException {
+        try {
+            return JTS.transform(geom, mathTransform);
+        } catch (Exception e) {
+            throw new IOException(e);
         }
     }
     
@@ -178,7 +212,10 @@ public class SimpleMonetDBFeatureReader  implements  FeatureReader<SimpleFeature
                         double y = rs.getDouble(columnName + "_y");
                         
                         Geometry geom = geometryFactory.createPoint(new Coordinate(x, y));
+                        geom.setSRID(srid);
                         geom.setUserData(gatt.getCoordinateReferenceSystem());
+                        
+                        //geom = transform(geom);
                         
                         value = geom;                        
                     } else {
@@ -213,7 +250,7 @@ public class SimpleMonetDBFeatureReader  implements  FeatureReader<SimpleFeature
             
             // create the feature
             try {
-                return builder.buildFeature(fid);
+                   return builder.buildFeature(fid);
             } catch (IllegalAttributeException e) {
                 throw new RuntimeException(e);
             }
