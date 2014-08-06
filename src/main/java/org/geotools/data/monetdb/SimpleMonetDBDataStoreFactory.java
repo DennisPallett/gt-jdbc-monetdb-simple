@@ -40,6 +40,10 @@ import org.opengis.feature.type.GeometryDescriptor;
 public class SimpleMonetDBDataStoreFactory  extends AbstractDataStoreFactory {
     private static final Logger LOGGER = Logger.getLogger("org.geotools.data.monetdb.SimpleMonetDBDataStoreFactory");
     
+    /** parameter for database type */
+    public static final String DBTYPE = "monetdb_simple";
+    public static final Param DBTYPE_PARAM = new Param("dbtype", String.class, "Type", true, DBTYPE);
+    
     public static final Param HOSTNAME_PARAM = new Param("hostname", String.class, "hostname", true, "localhost");
     public static final Param PORT_PARAM = new Param("port", Integer.class, "port number", true, 50000);
     public static final Param SCHEMA_PARAM = new Param("schema", String.class, "Database schema", true, "sys");
@@ -65,8 +69,33 @@ public class SimpleMonetDBDataStoreFactory  extends AbstractDataStoreFactory {
     @Override
     public Param[] getParametersInfo() {
         return (new Param[] {
-            HOSTNAME_PARAM, PORT_PARAM, SCHEMA_PARAM, DATABASE_PARAM, USERNAME_PARAM, PASSWORD_PARAM, NAMESPACE_PARAM
+            DBTYPE_PARAM, HOSTNAME_PARAM, PORT_PARAM, SCHEMA_PARAM, DATABASE_PARAM, USERNAME_PARAM, PASSWORD_PARAM, NAMESPACE_PARAM
         });
+    }
+    
+    @Override
+    public boolean canProcess(Map params) {
+        if (!super.canProcess(params)) {
+            return false; // was not in agreement with getParametersInfo
+        }
+
+        return checkDBType(params);
+    }
+    
+    protected final boolean checkDBType(Map params) {
+        String type;
+
+        try {
+            type = (String) DBTYPE_PARAM.lookUp(params);
+
+            if (DBTYPE.equals(type)) {
+                return true;
+            }
+
+            return false;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     @Override
